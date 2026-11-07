@@ -1,9 +1,9 @@
 {
-  "name": "墙壁编辑器",
-  "version": "0.1.3",
+  "name": "墙壁编辑器诊断",
+  "version": "0.1.4",
   "manifest_version": 1,
   "author": "TRPG Lab",
-  "description": "DM 绘制隐藏墙壁；玩家自动同步本地碰撞，阻挡棋子与动态视野。",
+  "description": "临时诊断版本：只注册一个最小工具，用于定位工具栏未出现的原因。",
   "icon": "./icons/tool.svg",
   "background_url": "./background.html"
 }
