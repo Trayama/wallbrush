@@ -1,6 +1,6 @@
 {
   "name": "墙壁编辑器",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "manifest_version": 1,
   "author": "TRPG Lab",
   "description": "DM 绘制隐藏墙壁；玩家自动同步本地碰撞，阻挡棋子与动态视野。",
