@@ -2,14 +2,14 @@ import OBR, {
   buildLine,
   buildWall,
   buildLight
-} from "https://esm.sh/@owlbear-rodeo/sdk@3.1.0?bundle";
+} from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
 
 const ID = "com.trpglab.wallbrush";
-const TOOL_ID = ID + "/tool-v012";
-const DRAW_MODE = ID + "/draw-v012";
-const ERASE_MODE = ID + "/erase-v012";
-const OVERLAY_ACTION = ID + "/toggle-overlay-v012";
-const SNAP_ACTION = ID + "/toggle-snap-v012";
+const TOOL_ID = ID + "/tool-v013";
+const DRAW_MODE = ID + "/draw-v013";
+const ERASE_MODE = ID + "/erase-v013";
+const OVERLAY_ACTION = ID + "/toggle-overlay-v013";
+const SNAP_ACTION = ID + "/toggle-snap-v013";
 
 const WALL_SOURCE_KEY = ID + "/wall-source";
 const LOCAL_WALL_KEY = ID + "/local-wall";
@@ -458,10 +458,12 @@ async function createTools() {
     icons: [{
       icon: TOOL_ICON,
       label: "墙壁编辑器",
-      filter: { roles: ["GM"] }
     }],
     defaultMode: DRAW_MODE,
-    defaultMetadata: { snapToGrid: true }
+    defaultMetadata: { snapToGrid: true },
+    async onClick() {
+      return await canEditWalls();
+    }
   });
 
   await OBR.tool.createMode({
@@ -469,7 +471,7 @@ async function createTools() {
     icons: [{
       icon: DRAW_ICON,
       label: "绘制墙壁：按住拖动",
-      filter: { activeTools: [TOOL_ID], roles: ["GM"] }
+      filter: { activeTools: [TOOL_ID] }
     }],
     cursors: [{ cursor: "crosshair" }],
 
@@ -515,7 +517,7 @@ async function createTools() {
     icons: [{
       icon: ERASE_ICON,
       label: "橡皮擦：点击墙线删除",
-      filter: { activeTools: [TOOL_ID], roles: ["GM"] }
+      filter: { activeTools: [TOOL_ID] }
     }],
     cursors: [{ cursor: "crosshair" }],
 
@@ -556,7 +558,7 @@ async function createTools() {
     icons: [{
       icon: EYE_ICON,
       label: "显示/隐藏 DM 墙线辅助",
-      filter: { activeTools: [TOOL_ID], roles: ["GM"] }
+      filter: { activeTools: [TOOL_ID] }
     }],
     async onClick() {
       if (!(await canEditWalls())) return;
@@ -581,7 +583,7 @@ async function createTools() {
     icons: [{
       icon: SNAP_ICON,
       label: "切换网格吸附",
-      filter: { activeTools: [TOOL_ID], roles: ["GM"] }
+      filter: { activeTools: [TOOL_ID] }
     }],
     async onClick() {
       if (!(await canEditWalls())) return;
@@ -596,68 +598,29 @@ async function createTools() {
   });
 }
 
-let toolsCreated = false;
-
-async function removeLegacyToolbarEntries() {
-  const oldIds = {
-    tool: ID + "/tool",
-    draw: ID + "/draw",
-    erase: ID + "/erase",
-    overlay: ID + "/toggle-overlay",
-    snap: ID + "/toggle-snap"
-  };
-
-  const removals = [
-    () => OBR.tool.remove(oldIds.tool),
-    () => OBR.tool.removeMode(oldIds.draw),
-    () => OBR.tool.removeMode(oldIds.erase),
-    () => OBR.tool.removeAction(oldIds.overlay),
-    () => OBR.tool.removeAction(oldIds.snap)
-  ];
-
-  for (const remove of removals) {
-    try {
-      await remove();
-    } catch (error) {
-      console.debug("[WallBrush] Legacy toolbar cleanup skipped:", error);
-    }
-  }
-}
-
-async function ensureToolsCreated() {
-  if (toolsCreated) return;
-  if (!(await OBR.scene.isReady())) return;
-
-  await refreshRole();
-  await removeLegacyToolbarEntries();
-  await createTools();
-  toolsCreated = true;
-
-  await OBR.notification.show(
-    isGM()
-      ? "墙壁编辑器已注册：请看右侧竖向工具栏底部的红色墙线图标。点击后，顶部左侧是绘制/擦除，顶部右侧是显示辅助线/网格吸附。"
-      : "墙壁编辑器已连接。编辑工具仅对房主（GM）显示。",
-    "SUCCESS"
-  );
-  console.info("[WallBrush] toolbar registered; role =", currentRole);
-}
 
 OBR.onReady(async () => {
   try {
-    await refreshRole();
-    console.info("[WallBrush] background loaded; role =", currentRole);
+    console.info("[WallBrush] OBR ready; isAvailable =", OBR.isAvailable);
+
+    // Register toolbar UI immediately after SDK readiness, exactly as the official
+    // custom-tool tutorial does. The toolbar itself becomes visible when a scene is ready.
+    await createTools();
+    await OBR.notification.show(
+      "墙壁编辑器 UI 已注册。请查看右侧工具栏；如果仍看不到，说明不是场景 Ready 时机的问题。",
+      "SUCCESS"
+    );
 
     OBR.scene.items.onChange(() => requestSync());
 
     OBR.scene.onReadyChange(async ready => {
       if (!ready) return;
       try {
-        await ensureToolsCreated();
         await requestSync();
       } catch (error) {
-        console.error("[WallBrush] scene-ready setup failed:", error);
+        console.error("[WallBrush] scene sync failed:", error);
         await OBR.notification.show(
-          "墙壁编辑器注册失败：" + (error && error.message ? error.message : "未知错误"),
+          "墙壁场景同步失败：" + (error && error.message ? error.message : "未知错误"),
           "ERROR"
         );
       }
@@ -669,19 +632,17 @@ OBR.onReady(async () => {
     });
 
     if (await OBR.scene.isReady()) {
-      await ensureToolsCreated();
       await requestSync();
-    } else {
-      await OBR.notification.show(
-        "墙壁编辑器后台已启动。打开战斗场景后，工具会加入右侧竖向工具栏。",
-        "INFO"
-      );
     }
   } catch (error) {
     console.error("[WallBrush] startup failed:", error);
-    await OBR.notification.show(
-      "墙壁编辑器启动失败：" + (error && error.message ? error.message : "未知错误"),
-      "ERROR"
-    );
+    try {
+      await OBR.notification.show(
+        "墙壁编辑器启动失败：" + (error && error.message ? error.message : "未知错误"),
+        "ERROR"
+      );
+    } catch (notificationError) {
+      console.error("[WallBrush] notification failed:", notificationError);
+    }
   }
 });
