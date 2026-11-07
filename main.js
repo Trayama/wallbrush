@@ -159,7 +159,6 @@ function makeLocalWall(source) {
     .scale(source.scale || UNIT)
     .blocking(true)
     .doubleSided(true)
-    .disableHit(true)
     .disableAttachmentBehavior(["VISIBLE", "COPY"])
     .metadata({
       [LOCAL_WALL_KEY]: { sourceId: source.id }
@@ -693,7 +692,8 @@ async function createTools() {
     ID + "/tool",
     ID + "/tool-v012",
     ID + "/tool-v013",
-    ID + "/tool-v020"
+    ID + "/tool-v020",
+    ID + "/tool-v021"
   ];
   for (const id of oldTools) {
     try { await OBR.tool.remove(id); } catch (error) {}
@@ -707,7 +707,9 @@ async function createTools() {
     ID + "/draw-v013",
     ID + "/erase-v013",
     ID + "/draw-v020",
-    ID + "/erase-v020"
+    ID + "/erase-v020",
+    ID + "/draw-v021",
+    ID + "/erase-v021"
   ];
   for (const id of oldModes) {
     try { await OBR.tool.removeMode(id); } catch (error) {}
@@ -724,11 +726,27 @@ async function createTools() {
     ID + "/snap-v020",
     ID + "/undo-v020",
     ID + "/redo-v020",
-    ID + "/clear-v020"
+    ID + "/clear-v020",
+    ID + "/guides-v021",
+    ID + "/snap-v021",
+    ID + "/undo-v021",
+    ID + "/redo-v021",
+    ID + "/clear-v021"
   ];
   for (const id of oldActions) {
     try { await OBR.tool.removeAction(id); } catch (error) {}
   }
+
+  await OBR.tool.create({
+    id: TOOL_ID,
+    icons: [{
+      icon: ICON,
+      label: "墙壁编辑器",
+      filter: { roles: ["GM"] }
+    }],
+    defaultMode: DRAW_MODE,
+    defaultMetadata: { snapToGrid: true }
+  });
 
   await OBR.tool.createMode({
     id: DRAW_MODE,
@@ -817,16 +835,7 @@ async function createTools() {
     }
   });
 
-  await OBR.tool.create({
-    id: TOOL_ID,
-    icons: [{
-      icon: ICON,
-      label: "墙壁编辑器",
-      filter: { roles: ["GM"] }
-    }],
-    defaultMode: DRAW_MODE,
-    defaultMetadata: { snapToGrid: true }
-  });
+
 
   const filter = { activeTools: [TOOL_ID], roles: ["GM"] };
 
