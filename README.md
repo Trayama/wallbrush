@@ -1,29 +1,30 @@
-# WallBrush 0.2.2
+# WallBrush 0.3.0
 
 Install manifest: https://trayama.github.io/wallbrush/manifest.json
 
-## Quiet interaction
-- Drawing and erasing are silent during normal use.
-- Guide and grid-snap toggles are silent.
-- Routine movement blocking is silent; token snap-back is the feedback.
-- Short accidental drags are ignored silently.
-- Notifications are reserved for errors, failed collision correction, and the deliberate clear-all confirmation/result.
+## Barrier types
+- Wall: blocks vision and movement.
+- Door: blocks vision and movement while closed. Click an existing door in Door mode to toggle it; its state is stored in shared scene metadata.
+- Window: allows vision/light through but blocks movement using the GM-side token correction.
 
-## Storage and collision architecture
-- A hidden shared LINE item stores each wall's geometry in the scene.
-- Each connected WallBrush client derives a local WALL item attached to that source line.
-- Local WALL items use Owlbear's FOG layer and disabled VISIBLE/COPY attachment behavior, following the Owlbear Dynamic Fog example.
-- Only the GM client creates a local red dashed guide line.
-- Legacy v0.2.0 shared WALL items are migrated to hidden shared LINE sources on scene load.
+## Editing
+- Edit mode: click a barrier to show endpoint handles.
+- Drag near an endpoint to resize/re-angle the segment.
+- Drag the middle of a segment to move the entire barrier.
+- Eraser deletes walls, doors, and windows.
 
-## Tools
-- Drag to draw a wall segment; the extension verifies the shared source and local WALL after release.
-- Click a wall with the eraser mode to delete it.
-- Toggle DM guides and grid snapping.
-- Undo/redo use Owlbear scene history.
-- Clear all WallBrush walls requires a second click within 5 seconds.
+## Geometry
+- Drawing endpoints snap to nearby existing barrier segments.
+- Local collision walls extend slightly past joined endpoints to reduce light leaks at seams.
+- Door and window source segments are included in join geometry, so wall ends meet the opening edges instead of extending across the opening.
 
-## Movement collision
-- The GM client watches CHARACTER and MOUNT image token updates.
-- Crossing a wall attempts to restore the token to its previous position.
-- This is post-update correction, not a native movement constraint; a brief snap-back may occur.
+## Existing scenes
+- Existing v0.2.x hidden line sources are treated as ordinary walls.
+- Legacy shared WALL items are migrated into WallBrush source lines.
+- Existing barriers remain in the scene.
+
+## Technical notes
+- Shared hidden LINE sources hold geometry and door state.
+- Each client derives local WALL objects only for opaque barriers.
+- Window segments do not create local WALL objects; the GM movement guard still treats them as solid.
+- Movement blocking is post-update correction rather than a native Owlbear movement constraint.

@@ -1,9 +1,9 @@
-import OBR, { buildLine, buildWall } from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
+import OBR, { buildLine, buildShape, buildWall } from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
 
 const ID = "com.trpglab.wallbrush";
-const TOOL_ID = ID + "/tool-v021";
-const DRAW_MODE = ID + "/draw-v021";
-const ERASE_MODE = ID + "/erase-v021";
+const TOOL_ID = ID + "/tool-v030";
+const DRAW_MODE = ID + "/draw-v030";
+const ERASE_MODE = ID + "/erase-v030";
 
 const WALL_SOURCE_KEY = ID + "/wall-source";
 const LEGACY_WALL_KEY = ID + "/wall";
@@ -19,6 +19,15 @@ const SNAP_ICON = "https://trayama.github.io/wallbrush/icons/snap.svg";
 const UNDO_ICON = "https://trayama.github.io/wallbrush/icons/undo.svg";
 const REDO_ICON = "https://trayama.github.io/wallbrush/icons/redo.svg";
 const CLEAR_ICON = "https://trayama.github.io/wallbrush/icons/clear.svg";
+const DOOR_ICON = "https://trayama.github.io/wallbrush/icons/door.svg";
+const WINDOW_ICON = "https://trayama.github.io/wallbrush/icons/window.svg";
+const EDIT_ICON = "https://trayama.github.io/wallbrush/icons/edit.svg";
+const DOOR_MODE = ID + "/door-v030";
+const WINDOW_MODE = ID + "/window-v030";
+const EDIT_MODE = ID + "/edit-v030";
+const HANDLE_KEY = ID + "/edit-handle";
+let JOIN_SNAP_DISTANCE = 8;
+let WALL_END_OVERLAP = 2.5;
 
 const ZERO = { x: 0, y: 0 };
 const UNIT = { x: 1, y: 1 };
@@ -31,6 +40,11 @@ let previewId = null;
 let previousItems = new Map();
 let sceneChangeQueue = Promise.resolve();
 let clearArmedUntil = 0;
+let gridDpi = 100;
+let selectedSourceId = null;
+let selectedHandleIds = [];
+let editState = null;
+let editPreviewId = null;
 
 async function refreshRole() {
   role = await OBR.player.getRole();
@@ -42,8 +56,26 @@ function isGM() {
 }
 
 function isWallSource(item) {
-  return item?.type === "LINE" &&
-    item.metadata?.[WALL_SOURCE_KEY]?.version === 1;
+  const data = item?.metadata?.[WALL_SOURCE_KEY];
+  return item?.type === "LINE" && data && data.version >= 1;
+}
+
+function sourceKind(source) {
+  const kind = source?.metadata?.[WALL_SOURCE_KEY]?.kind;
+  return kind === "door" || kind === "window" ? kind : "wall";
+}
+
+function isDoorOpen(source) {
+  return sourceKind(source) === "door" &&
+    source.metadata?.[WALL_SOURCE_KEY]?.open === true;
+}
+
+function blocksVision(source) {
+  return sourceKind(source) !== "window" && !isDoorOpen(source);
+}
+
+function blocksMovement(source) {
+  return !isDoorOpen(source);
 }
 
 function isLegacyWall(item) {
@@ -92,10 +124,93 @@ function transformPoint(item, point) {
   };
 }
 
-function wallSegments(source) {
+function inverseTransformPoint(item, point) {
+  const scale = item.scale || UNIT;
+  const position = item.position || ZERO;
+  const radians = -(item.rotation || 0) * Math.PI / 180;
+  const x = point.x - position.x;
+  const y = point.y - position.y;
+  return {
+    x: (x * Math.cos(radians) - y * Math.sin(radians)) / (scale.x || 1),
+    y: (x * Math.sin(radians) + y * Math.cos(radians)) / (scale.y || 1)
+  };
+}
+
+function closestPointOnSegment(point, start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return clonePoint(start);
+  const t = Math.max(0, Math.min(1,
+    ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared
+  ));
+  return { x: start.x + t * dx, y: start.y + t * dy };
+}
+
+function guideStyle(source) {
+  const kind = sourceKind(source);
+  if (kind === "door") {
+    return isDoorOpen(source)
+      ? { color: "#42d58b", dash: [4, 4] }
+      : { color: "#ffb547", dash: [9, 5] };
+  }
+  if (kind === "window") {
+    return { color: "#54b9ff", dash: [3, 4] };
+  }
+  return { color: "#ff5364", dash: [9, 5] };
+}
+
+function collisionLocalPoints(source, allSources) {
+  const [rawStart, rawEnd] = wallSegments(source)[0];
+  const dx = rawEnd.x - rawStart.x;
+  const dy = rawEnd.y - rawStart.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 0.001) {
+    return [source.startPosition, source.endPosition];
+  }
+
+  const ux = dx / length;
+  const uy = dy / length;
+
+  function joinedEndpoint(point) {
+    let nearest = null;
+    let nearestDistance = JOIN_SNAP_DISTANCE;
+    for (const other of allSources) {
+      if (other.id === source.id) continue;
+      for (const [a, b] of wallSegments(other)) {
+        const projected = closestPointOnSegment(point, a, b);
+        const distance = Math.hypot(point.x - projected.x, point.y - projected.y);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearest = projected;
+        }
+      }
+    }
+    return nearest || point;
+  }
+
+  const joinedStart = joinedEndpoint(rawStart);
+  const joinedEnd = joinedEndpoint(rawEnd);
+  const worldStart = {
+    x: joinedStart.x - ux * WALL_END_OVERLAP,
+    y: joinedStart.y - uy * WALL_END_OVERLAP
+  };
+  const worldEnd = {
+    x: joinedEnd.x + ux * WALL_END_OVERLAP,
+    y: joinedEnd.y + uy * WALL_END_OVERLAP
+  };
+
+  return [
+    inverseTransformPoint(source, worldStart),
+    inverseTransformPoint(source, worldEnd)
+  ];
+}
+
+function collisionWorldSegments(source, allSources) {
+  const points = collisionLocalPoints(source, allSources);
   return [[
-    transformPoint(source, source.startPosition),
-    transformPoint(source, source.endPosition)
+    transformPoint(source, points[0]),
+    transformPoint(source, points[1])
   ]];
 }
 
@@ -104,9 +219,9 @@ function wallSegments(source) {
  * Each client derives its own local WALL from that shared source.
  * This follows Owlbear's Dynamic Fog reconciliation pattern.
  */
-function makeWallSource(start, end) {
+function makeWallSource(start, end, kind = "wall") {
   return buildLine()
-    .name("WallBrush Source")
+    .name(kind === "door" ? "WallBrush Door" : kind === "window" ? "WallBrush Window" : "WallBrush Wall")
     .startPosition(start)
     .endPosition(end)
     .position(ZERO)
@@ -118,7 +233,9 @@ function makeWallSource(start, end) {
     .disableHit(true)
     .metadata({
       [WALL_SOURCE_KEY]: {
-        version: 1,
+        version: 2,
+        kind,
+        open: false,
         createdBy: "WallBrush"
       }
     })
@@ -140,7 +257,9 @@ function makeSourceFromLegacyWall(wall) {
     .disableHit(true)
     .metadata({
       [WALL_SOURCE_KEY]: {
-        version: 1,
+        version: 2,
+        kind: "wall",
+        open: false,
         createdBy: "WallBrush",
         migrated: true
       }
@@ -148,10 +267,10 @@ function makeSourceFromLegacyWall(wall) {
     .build();
 }
 
-function makeLocalWall(source) {
+function makeLocalWall(source, allSources) {
   return buildWall()
     .name("WallBrush Local Wall")
-    .points([source.startPosition, source.endPosition])
+    .points(collisionLocalPoints(source, allSources))
     .attachedTo(source.id)
     .position(source.position || ZERO)
     .rotation(source.rotation || 0)
@@ -167,6 +286,7 @@ function makeLocalWall(source) {
 
 function makeGuide(source) {
   const [start, end] = wallSegments(source)[0];
+  const style = guideStyle(source);
   return buildLine()
     .name("WallBrush DM Guide")
     .startPosition(start)
@@ -174,10 +294,10 @@ function makeGuide(source) {
     .position(ZERO)
     .rotation(0)
     .scale(UNIT)
-    .strokeColor("#ff5364")
+    .strokeColor(style.color)
     .strokeOpacity(0.95)
     .strokeWidth(4)
-    .strokeDash([9, 5])
+    .strokeDash(style.dash)
     .visible(showGuides)
     .layer("CONTROL")
     .locked(true)
@@ -205,14 +325,40 @@ function makePreview(start) {
     .build();
 }
 
-async function drawPoint(point) {
-  if (!snapToGrid) return point;
+async function snapToNearbyGeometry(point, excludeId) {
+  let viewportScale = 1;
   try {
-    return await OBR.scene.grid.snapPosition(point, 1, true, false);
-  } catch (error) {
-    console.warn("[WallBrush] Grid snap failed; using free point.", error);
-    return point;
+    viewportScale = Math.max(await OBR.viewport.getScale(), 0.1);
+  } catch (error) {}
+  const tolerance = Math.max(4, 10 / viewportScale);
+  const sources = await OBR.scene.items.getItems(isWallSource);
+  let nearest = null;
+  let nearestDistance = tolerance;
+
+  for (const source of sources) {
+    if (source.id === excludeId) continue;
+    for (const [start, end] of wallSegments(source)) {
+      const projected = closestPointOnSegment(point, start, end);
+      const distance = Math.hypot(point.x - projected.x, point.y - projected.y);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = projected;
+      }
+    }
   }
+  return nearest || point;
+}
+
+async function drawPoint(point, excludeId) {
+  let result = point;
+  if (snapToGrid) {
+    try {
+      result = await OBR.scene.grid.snapPosition(point, 1, true, false);
+    } catch (error) {
+      console.warn("[WallBrush] Grid snap failed; using free point.", error);
+    }
+  }
+  return await snapToNearbyGeometry(result, excludeId);
 }
 
 async function removePreview() {
@@ -243,12 +389,13 @@ async function migrateLegacyWalls(items) {
   return await OBR.scene.items.getItems();
 }
 
-function sameLocalWall(localWall, source) {
+function sameLocalWall(localWall, source, allSources) {
   const points = localWall.points || [];
+  const expected = collisionLocalPoints(source, allSources);
   return localWall.attachedTo === source.id &&
     points.length === 2 &&
-    samePoint(points[0], source.startPosition) &&
-    samePoint(points[1], source.endPosition) &&
+    samePoint(points[0], expected[0]) &&
+    samePoint(points[1], expected[1]) &&
     samePoint(localWall.position, source.position) &&
     samePoint(localWall.scale, source.scale) &&
     Math.abs((localWall.rotation || 0) - (source.rotation || 0)) < 0.1 &&
@@ -260,6 +407,10 @@ async function reconcileLocalItems(sharedItems) {
   if (!(await OBR.scene.isReady())) return;
 
   const sources = sharedItems.filter(isWallSource);
+  if (selectedSourceId && !sources.some(source => source.id === selectedSourceId)) {
+    selectedSourceId = null;
+    await clearSelectionHandles();
+  }
   const localItems = await OBR.scene.local.getItems();
   const localWalls = localItems.filter(isLocalWall);
   const guides = localItems.filter(isGuide);
@@ -270,6 +421,8 @@ async function reconcileLocalItems(sharedItems) {
   }
 
   const sourceById = new Map(sources.map(source => [source.id, source]));
+  const visionSources = sources.filter(blocksVision);
+  const visionSourceIds = new Set(visionSources.map(source => source.id));
   const localBySource = new Map(
     localWalls.map(wall => [wall.metadata[LOCAL_WALL_KEY].sourceId, wall])
   );
@@ -284,28 +437,30 @@ async function reconcileLocalItems(sharedItems) {
   const guidesToDelete = [];
   const guidesToUpdate = [];
 
-  for (const source of sources) {
+  for (const source of visionSources) {
     const localWall = localBySource.get(source.id);
     if (!localWall) {
-      wallsToAdd.push(makeLocalWall(source));
-    } else if (!sameLocalWall(localWall, source)) {
+      wallsToAdd.push(makeLocalWall(source, sources));
+    } else if (!sameLocalWall(localWall, source, sources)) {
       wallsToUpdate.push({ localWall, source });
     }
+  }
 
+  for (const source of sources) {
     if (isGM()) {
       const guide = guideBySource.get(source.id);
       if (!guide) {
         guidesToAdd.push(makeGuide(source));
       } else {
         const [start, end] = wallSegments(source)[0];
-        guidesToUpdate.push({ guide, start, end });
+        guidesToUpdate.push({ guide, start, end, style: guideStyle(source) });
       }
     }
   }
 
   for (const wall of localWalls) {
     const sourceId = wall.metadata[LOCAL_WALL_KEY].sourceId;
-    if (!sourceById.has(sourceId)) wallsToDelete.push(wall.id);
+    if (!visionSourceIds.has(sourceId)) wallsToDelete.push(wall.id);
   }
 
   for (const guide of guides) {
@@ -327,7 +482,7 @@ async function reconcileLocalItems(sharedItems) {
         for (const item of items) {
           const source = byId.get(item.id);
           if (!source) continue;
-          item.points = [source.startPosition, source.endPosition];
+          item.points = collisionLocalPoints(source, sources);
           item.position = source.position;
           item.rotation = source.rotation;
           item.scale = source.scale;
@@ -356,6 +511,8 @@ async function reconcileLocalItems(sharedItems) {
           if (!entry) continue;
           item.startPosition = entry.start;
           item.endPosition = entry.end;
+          item.strokeColor = entry.style.color;
+          item.strokeDash = entry.style.dash;
           item.visible = showGuides;
         }
       }
@@ -423,7 +580,8 @@ function segmentDistance(a, b, c, d) {
 
 function movementHitsWalls(start, end, radius, sources) {
   for (const source of sources) {
-    for (const [a, b] of wallSegments(source)) {
+    if (!blocksMovement(source)) continue;
+    for (const [a, b] of collisionWorldSegments(source, sources)) {
       const startDistance = pointToSegmentDistance(start, a, b);
       const endDistance = pointToSegmentDistance(end, a, b);
       const sweptDistance = segmentDistance(start, end, a, b);
@@ -539,6 +697,11 @@ function queueSceneReconcile() {
 
 async function initializeScene() {
   if (!(await OBR.scene.isReady())) return;
+  try {
+    gridDpi = await OBR.scene.grid.getDpi();
+    JOIN_SNAP_DISTANCE = Math.max(6, gridDpi * 0.07);
+    WALL_END_OVERLAP = Math.max(2, gridDpi * 0.02);
+  } catch (error) {}
   let items = await OBR.scene.items.getItems();
   items = await migrateLegacyWalls(items);
 
@@ -620,11 +783,11 @@ async function clearWalls() {
   await OBR.notification.show("已清空 " + sources.length + " 段墙壁。", "SUCCESS");
 }
 
-async function commitWall(start, end) {
+async function commitWall(start, end, kind = "wall") {
   const length = Math.hypot(end.x - start.x, end.y - start.y);
   if (length < 4) return;
 
-  const source = makeWallSource(start, end);
+  const source = makeWallSource(start, end, kind);
   console.info("[WallBrush] Committing source line:", source.id, start, end);
 
   await OBR.scene.items.addItems([source]);
@@ -662,79 +825,41 @@ async function commitWall(start, end) {
 
 }
 
-async function createTools() {
-  const oldTools = [
-    ID + "/diagnostic-v014",
-    ID + "/diagnostic-v015",
-    ID + "/diagnostic-v016",
-    ID + "/tool",
-    ID + "/tool-v012",
-    ID + "/tool-v013",
-    ID + "/tool-v020",
-    ID + "/tool-v021"
-  ];
-  for (const id of oldTools) {
-    try { await OBR.tool.remove(id); } catch (error) {}
-  }
+async function toggleDoorAt(point) {
+  const source = await nearestWall(point);
+  if (!source || sourceKind(source) !== "door") return false;
 
-  const oldModes = [
-    ID + "/draw",
-    ID + "/erase",
-    ID + "/draw-v012",
-    ID + "/erase-v012",
-    ID + "/draw-v013",
-    ID + "/erase-v013",
-    ID + "/draw-v020",
-    ID + "/erase-v020",
-    ID + "/draw-v021",
-    ID + "/erase-v021"
-  ];
-  for (const id of oldModes) {
-    try { await OBR.tool.removeMode(id); } catch (error) {}
-  }
-
-  const oldActions = [
-    ID + "/toggle-overlay",
-    ID + "/toggle-snap",
-    ID + "/toggle-overlay-v012",
-    ID + "/toggle-snap-v012",
-    ID + "/toggle-overlay-v013",
-    ID + "/toggle-snap-v013",
-    ID + "/guides-v020",
-    ID + "/snap-v020",
-    ID + "/undo-v020",
-    ID + "/redo-v020",
-    ID + "/clear-v020",
-    ID + "/guides-v021",
-    ID + "/snap-v021",
-    ID + "/undo-v021",
-    ID + "/redo-v021",
-    ID + "/clear-v021"
-  ];
-  for (const id of oldActions) {
-    try { await OBR.tool.removeAction(id); } catch (error) {}
-  }
-
-  await OBR.tool.create({
-    id: TOOL_ID,
-    icons: [{
-      icon: ICON,
-      label: "墙壁编辑器",
-      filter: { roles: ["GM"] }
-    }],
-    defaultMode: DRAW_MODE,
-    defaultMetadata: { snapToGrid: true }
+  await OBR.scene.items.updateItems([source], items => {
+    const item = items[0];
+    if (!item) return;
+    const data = item.metadata[WALL_SOURCE_KEY] || {};
+    item.metadata[WALL_SOURCE_KEY] = {
+      ...data,
+      version: 2,
+      kind: "door",
+      open: data.open !== true
+    };
   });
+  await queueSceneReconcile();
+  return true;
+}
 
+async function createSegmentMode(modeId, icon, label, kind, clickHandler) {
   await OBR.tool.createMode({
-    id: DRAW_MODE,
+    id: modeId,
     icons: [{
-      icon: DRAW_ICON,
-      label: "绘制墙壁（拖动）",
+      icon,
+      label,
       filter: { activeTools: [TOOL_ID], roles: ["GM"] }
     }],
     disabled: { roles: ["PLAYER"] },
     cursors: [{ cursor: "crosshair" }],
+    ...(clickHandler ? {
+      async onToolClick(_, event) {
+        await clickHandler(event);
+        return false;
+      }
+    } : {}),
     async onToolDragStart(context, event) {
       try {
         if (!(await canEdit())) return;
@@ -771,12 +896,12 @@ async function createTools() {
         if (!start || !previewId) return;
         const end = await drawPoint(event.pointerPosition);
         await removePreview();
-        await commitWall(start, end);
+        await commitWall(start, end, kind);
       } catch (error) {
         await removePreview();
-        console.error("[WallBrush] Wall commit failed.", error);
+        console.error("[WallBrush] Barrier commit failed.", error);
         await OBR.notification.show(
-          "墙壁保存失败：" + (error?.message || "未知错误"),
+          "障碍物保存失败：" + (error?.message || "未知错误"),
           "ERROR"
         );
       }
@@ -790,12 +915,278 @@ async function createTools() {
       await removePreview();
     }
   });
+}
+
+function makeEditHandle(position, label) {
+  return buildShape()
+    .name("WallBrush Edit Handle")
+    .position(position)
+    .width(18)
+    .height(18)
+    .shapeType("CIRCLE")
+    .fillColor(label === "start" ? "#55d6ff" : "#ffffff")
+    .fillOpacity(1)
+    .strokeColor("#176c91")
+    .strokeWidth(2)
+    .layer("CONTROL")
+    .locked(true)
+    .disableHit(true)
+    .metadata({ [HANDLE_KEY]: label })
+    .build();
+}
+
+async function clearSelectionHandles() {
+  if (selectedHandleIds.length) {
+    const ids = selectedHandleIds;
+    selectedHandleIds = [];
+    try { await OBR.scene.local.deleteItems(ids); } catch (error) {}
+  }
+}
+
+async function showSelection(source) {
+  await clearSelectionHandles();
+  selectedSourceId = source?.id || null;
+  if (!source || !isGM()) return;
+  const [start, end] = wallSegments(source)[0];
+  const handles = [
+    makeEditHandle(start, "start"),
+    makeEditHandle(end, "end")
+  ];
+  selectedHandleIds = handles.map(item => item.id);
+  await OBR.scene.local.addItems(handles);
+}
+
+function makeEditPreview(start, end) {
+  return buildLine()
+    .name("WallBrush Edit Preview")
+    .startPosition(start)
+    .endPosition(end)
+    .position(ZERO)
+    .rotation(0)
+    .scale(UNIT)
+    .strokeColor("#48c8ff")
+    .strokeOpacity(1)
+    .strokeWidth(6)
+    .strokeDash([5, 3])
+    .layer("CONTROL")
+    .locked(true)
+    .disableHit(true)
+    .metadata({ [PREVIEW_KEY]: true })
+    .build();
+}
+
+async function createEditMode() {
+  await OBR.tool.createMode({
+    id: EDIT_MODE,
+    icons: [{
+      icon: EDIT_ICON,
+      label: "选择/调整墙体（拖端点调整，拖中段移动）",
+      filter: { activeTools: [TOOL_ID], roles: ["GM"] }
+    }],
+    disabled: { roles: ["PLAYER"] },
+    cursors: [{ cursor: "crosshair" }],
+    async onToolClick(_, event) {
+      const source = await nearestWall(event.pointerPosition);
+      await showSelection(source);
+      return false;
+    },
+    async onToolDragStart(_, event) {
+      const source = await nearestWall(event.pointerPosition);
+      if (!source) {
+        await showSelection(null);
+        return;
+      }
+      await showSelection(source);
+
+      const [start, end] = wallSegments(source)[0];
+      const scale = Math.max(await OBR.viewport.getScale(), 0.1);
+      const endpointTolerance = 22 / scale;
+      const startDistance = Math.hypot(event.pointerPosition.x - start.x, event.pointerPosition.y - start.y);
+      const endDistance = Math.hypot(event.pointerPosition.x - end.x, event.pointerPosition.y - end.y);
+      const mode = startDistance <= endpointTolerance
+        ? "start"
+        : endDistance <= endpointTolerance
+          ? "end"
+          : "move";
+
+      editState = {
+        sourceId: source.id,
+        mode,
+        pointerStart: clonePoint(event.pointerPosition),
+        originalStart: clonePoint(start),
+        originalEnd: clonePoint(end),
+        currentStart: clonePoint(start),
+        currentEnd: clonePoint(end)
+      };
+
+      const preview = makeEditPreview(start, end);
+      await OBR.scene.local.addItems([preview]);
+      editPreviewId = preview.id;
+    },
+    async onToolDragMove(_, event) {
+      if (!editState || !editPreviewId) return;
+      const pointer = await drawPoint(event.pointerPosition, editState.sourceId);
+      if (editState.mode === "start") {
+        editState.currentStart = pointer;
+      } else if (editState.mode === "end") {
+        editState.currentEnd = pointer;
+      } else {
+        const dx = pointer.x - editState.pointerStart.x;
+        const dy = pointer.y - editState.pointerStart.y;
+        editState.currentStart = {
+          x: editState.originalStart.x + dx,
+          y: editState.originalStart.y + dy
+        };
+        editState.currentEnd = {
+          x: editState.originalEnd.x + dx,
+          y: editState.originalEnd.y + dy
+        };
+      }
+
+      await OBR.scene.local.updateItems([editPreviewId], items => {
+        for (const item of items) {
+          item.startPosition = editState.currentStart;
+          item.endPosition = editState.currentEnd;
+        }
+      });
+    },
+    async onToolDragEnd() {
+      if (!editState) return;
+      const state = editState;
+      editState = null;
+      try {
+        const source = (await OBR.scene.items.getItems([state.sourceId]))[0];
+        if (source) {
+          const start = inverseTransformPoint(source, state.currentStart);
+          const end = inverseTransformPoint(source, state.currentEnd);
+          await OBR.scene.items.updateItems([source], items => {
+            const item = items[0];
+            if (!item) return;
+            item.startPosition = start;
+            item.endPosition = end;
+          });
+          await queueSceneReconcile();
+          const updated = (await OBR.scene.items.getItems([state.sourceId]))[0];
+          await showSelection(updated || null);
+        }
+      } catch (error) {
+        console.error("[WallBrush] Edit failed.", error);
+        await OBR.notification.show(
+          "墙体调整失败：" + (error?.message || "未知错误"),
+          "ERROR"
+        );
+      } finally {
+        if (editPreviewId) {
+          try { await OBR.scene.local.deleteItems([editPreviewId]); } catch (error) {}
+          editPreviewId = null;
+        }
+      }
+    },
+    async onToolDragCancel() {
+      editState = null;
+      if (editPreviewId) {
+        try { await OBR.scene.local.deleteItems([editPreviewId]); } catch (error) {}
+        editPreviewId = null;
+      }
+    },
+    async onDeactivate() {
+      editState = null;
+      selectedSourceId = null;
+      await clearSelectionHandles();
+      if (editPreviewId) {
+        try { await OBR.scene.local.deleteItems([editPreviewId]); } catch (error) {}
+        editPreviewId = null;
+      }
+    }
+  });
+}
+
+async function createTools() {
+  const oldTools = [
+    ID + "/diagnostic-v014",
+    ID + "/diagnostic-v015",
+    ID + "/diagnostic-v016",
+    ID + "/tool",
+    ID + "/tool-v012",
+    ID + "/tool-v013",
+    ID + "/tool-v020",
+    ID + "/tool-v021",
+    ID + "/tool-v030"
+  ];
+  for (const id of oldTools) {
+    try { await OBR.tool.remove(id); } catch (error) {}
+  }
+
+  const oldModes = [
+    ID + "/draw",
+    ID + "/erase",
+    ID + "/draw-v012",
+    ID + "/erase-v012",
+    ID + "/draw-v013",
+    ID + "/erase-v013",
+    ID + "/draw-v020",
+    ID + "/erase-v020",
+    ID + "/draw-v021",
+    ID + "/erase-v021",
+    ID + "/draw-v030",
+    ID + "/erase-v030",
+    ID + "/door-v030",
+    ID + "/window-v030",
+    ID + "/edit-v030"
+  ];
+  for (const id of oldModes) {
+    try { await OBR.tool.removeMode(id); } catch (error) {}
+  }
+
+  const oldActions = [
+    ID + "/toggle-overlay",
+    ID + "/toggle-snap",
+    ID + "/toggle-overlay-v012",
+    ID + "/toggle-snap-v012",
+    ID + "/toggle-overlay-v013",
+    ID + "/toggle-snap-v013",
+    ID + "/guides-v020",
+    ID + "/snap-v020",
+    ID + "/undo-v020",
+    ID + "/redo-v020",
+    ID + "/clear-v020",
+    ID + "/guides-v021",
+    ID + "/snap-v021",
+    ID + "/undo-v021",
+    ID + "/redo-v021",
+    ID + "/clear-v021",
+    ID + "/guides-v030",
+    ID + "/snap-v030",
+    ID + "/undo-v030",
+    ID + "/redo-v030",
+    ID + "/clear-v030"
+  ];
+  for (const id of oldActions) {
+    try { await OBR.tool.removeAction(id); } catch (error) {}
+  }
+
+  await OBR.tool.create({
+    id: TOOL_ID,
+    icons: [{
+      icon: ICON,
+      label: "墙壁编辑器",
+      filter: { roles: ["GM"] }
+    }],
+    defaultMode: DRAW_MODE,
+    defaultMetadata: { snapToGrid: true }
+  });
+
+  await createSegmentMode(DRAW_MODE, DRAW_ICON, "绘制墙壁（拖动）", "wall");
+  await createSegmentMode(DOOR_MODE, DOOR_ICON, "绘制门；点击已有门切换开关", "door", async event => {
+    await toggleDoorAt(event.pointerPosition);
+  });
+  await createSegmentMode(WINDOW_MODE, WINDOW_ICON, "绘制窗户（透光、阻挡移动）", "window");
 
   await OBR.tool.createMode({
     id: ERASE_MODE,
     icons: [{
       icon: ERASE_ICON,
-      label: "橡皮擦（点击墙线）",
+      label: "橡皮擦（点击墙、门或窗）",
       filter: { activeTools: [TOOL_ID], roles: ["GM"] }
     }],
     disabled: { roles: ["PLAYER"] },
@@ -806,29 +1197,32 @@ async function createTools() {
       if (source) {
         await OBR.scene.items.deleteItems([source.id]);
         await queueSceneReconcile();
+        if (selectedSourceId === source.id) await showSelection(null);
       }
       return false;
     }
   });
+
+  await createEditMode();
 
 
 
   const filter = { activeTools: [TOOL_ID], roles: ["GM"] };
 
   await OBR.tool.createAction({
-    id: ID + "/guides-v021",
+    id: ID + "/guides-v030",
     icons: [{ icon: EYE_ICON, label: "显示/隐藏 DM 墙线", filter }],
     async onClick() { await toggleGuides(); }
   });
 
   await OBR.tool.createAction({
-    id: ID + "/snap-v021",
+    id: ID + "/snap-v030",
     icons: [{ icon: SNAP_ICON, label: "切换网格吸附", filter }],
     async onClick() { await toggleSnap(); }
   });
 
   await OBR.tool.createAction({
-    id: ID + "/undo-v021",
+    id: ID + "/undo-v030",
     icons: [{ icon: UNDO_ICON, label: "撤销上一步场景操作", filter }],
     async onClick() {
       if (await canEdit()) await OBR.scene.history.undo();
@@ -836,7 +1230,7 @@ async function createTools() {
   });
 
   await OBR.tool.createAction({
-    id: ID + "/redo-v021",
+    id: ID + "/redo-v030",
     icons: [{ icon: REDO_ICON, label: "重做场景操作", filter }],
     async onClick() {
       if (await canEdit()) await OBR.scene.history.redo();
@@ -844,7 +1238,7 @@ async function createTools() {
   });
 
   await OBR.tool.createAction({
-    id: ID + "/clear-v021",
+    id: ID + "/clear-v030",
     icons: [{ icon: CLEAR_ICON, label: "清空全部 WallBrush 墙壁（需二次点击）", filter }],
     async onClick() { await clearWalls(); }
   });
@@ -877,7 +1271,7 @@ OBR.onReady(async () => {
       await initializeScene();
     }
 
-    console.info("[WallBrush] 0.2.1 ready; role =", role);
+    console.info("[WallBrush] 0.3.0 ready; role =", role);
   } catch (error) {
     console.error("[WallBrush] Startup failed.", error);
     await OBR.notification.show(
