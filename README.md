@@ -1,6 +1,13 @@
-# WallBrush 0.2.1
+# WallBrush 0.2.2
 
 Install manifest: https://trayama.github.io/wallbrush/manifest.json
+
+## Quiet interaction
+- Drawing and erasing are silent during normal use.
+- Guide and grid-snap toggles are silent.
+- Routine movement blocking is silent; token snap-back is the feedback.
+- Short accidental drags are ignored silently.
+- Notifications are reserved for errors, failed collision correction, and the deliberate clear-all confirmation/result.
 
 ## Storage and collision architecture
 - A hidden shared LINE item stores each wall's geometry in the scene.
