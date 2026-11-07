@@ -1,24 +1,24 @@
 import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
 
-const TOOL_ID = "com.trpglab.wallbrush/diagnostic-v014";
-const TOOL_ICON = new URL("./icons/tool.svg", import.meta.url).href;
+const TOOL_ID = "com.trpglab.wallbrush/diagnostic-v015";
+const TOOL_ICON = "https://cdn.jsdelivr.net/gh/Trayama/wallbrush@main/icons/tool.svg?v=0.1.5";
 
-function notify(message, type = "INFO") {
-  return OBR.notification.show("[WallBrush 诊断] " + message, type);
+async function notify(message, type = "INFO") {
+  try {
+    await OBR.notification.show("[WallBrush 0.1.5] " + message, type);
+  } catch (error) {
+    console.error("[WallBrush 0.1.5] notification failed:", error);
+  }
 }
 
-OBR.onReady(async () => {
-  console.info("[WallBrush diagnostic] SDK ready", {
-    isReady: OBR.isReady,
-    isAvailable: OBR.isAvailable,
-    location: window.location.href
-  });
+console.info("[WallBrush 0.1.5] script evaluated", {
+  isReady: OBR.isReady,
+  isAvailable: OBR.isAvailable
+});
 
-  try {
-    await notify("后台脚本已运行，SDK 已就绪。", "SUCCESS");
-  } catch (error) {
-    console.error("[WallBrush diagnostic] notification failed", error);
-  }
+OBR.onReady(async () => {
+  console.info("[WallBrush 0.1.5] OBR.onReady fired");
+  await notify("后台页面与 SDK 均已启动。", "SUCCESS");
 
   try {
     await OBR.tool.create({
@@ -28,18 +28,10 @@ OBR.onReady(async () => {
         label: "墙壁编辑器诊断"
       }]
     });
-
-    console.info("[WallBrush diagnostic] OBR.tool.create resolved", TOOL_ID);
-    await notify("右侧工具注册请求已成功提交。请找红色斜线图标。", "SUCCESS");
+    console.info("[WallBrush 0.1.5] OBR.tool.create resolved");
+    await notify("测试工具已提交注册，请查看右侧工具栏。", "SUCCESS");
   } catch (error) {
-    console.error("[WallBrush diagnostic] OBR.tool.create failed", error);
-    try {
-      await notify(
-        "工具注册失败：" + (error && error.message ? error.message : String(error)),
-        "ERROR"
-      );
-    } catch (notificationError) {
-      console.error("[WallBrush diagnostic] cannot show error notification", notificationError);
-    }
+    console.error("[WallBrush 0.1.5] tool registration failed:", error);
+    await notify("工具注册失败：" + (error?.message || String(error)), "ERROR");
   }
 });

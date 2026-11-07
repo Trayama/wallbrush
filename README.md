@@ -1,16 +1,25 @@
-# WallBrush 0.1.4 诊断版
+# WallBrush 0.1.5 诊断版
 
-这是一次最小化诊断，不包含绘制/擦除/墙体同步功能。
+本版本只诊断 Owlbear 扩展入口和 Tool API，不包含绘墙逻辑。
 
-它只做两件事：
-1. SDK 就绪后弹出「后台脚本已运行」。
-2. 调用官方 OBR.tool.create 注册一个名为「墙壁编辑器诊断」的右侧工具图标。
+## 本次修复
 
-根据结果定位：
-- 完全没有通知：background 页面或 SDK 模块没有成功运行。
-- 有「后台脚本已运行」，随后报工具注册失败：看错误通知内容。
-- 两条成功通知都有但图标不出现：问题在 Owlbear 工具栏显示/房间状态，不在墙体绘制代码。
-- 图标出现：后台与 SDK 的基础链路正常，下一步再把完整工具功能逐项加回。
+- Manifest 的 icon、background_url、action.icon、action.popover 全部改为绝对 HTTPS URL。
+- background.html 中的脚本地址改为绝对 HTTPS URL。
+- 新增诊断弹窗：用于区分扩展未在当前房间启用、页面资源无法加载、SDK 未就绪。
+- 后台 SDK 就绪后先显示通知，再单独注册测试 Tool。
 
-安装 manifest：
+## 安装
+
 https://cdn.jsdelivr.net/gh/Trayama/wallbrush@main/manifest.json
+
+## 观察
+
+1. 安装后在当前房间的扩展菜单中确认启用。
+2. 点击左上角的「墙壁编辑器诊断」扩展动作。
+3. 如果弹窗显示「HTML 页面已加载」，Popover URL 已正常加载。
+4. 如果弹窗显示「Popover 页面已加载 / Owlbear SDK 已就绪」，SDK 在扩展 iframe 内正常工作。
+5. 后台若成功，右侧工具栏会出现「墙壁编辑器诊断」图标，并弹出两条通知。
+6. 如果弹窗可加载但后台没有通知，问题集中在 background_url / 后台 iframe 加载，而非工具栏 UI。
+
+注意：manifest 及资源 URL 使用绝对地址，避免 Owlbear 将 ./background.html 解析到错误的站点根目录。
