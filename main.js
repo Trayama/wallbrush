@@ -31,7 +31,6 @@ let previewId = null;
 let previousItems = new Map();
 let sceneChangeQueue = Promise.resolve();
 let clearArmedUntil = 0;
-let lastBlockNotice = 0;
 
 async function refreshRole() {
   role = await OBR.player.getRole();
@@ -491,12 +490,6 @@ async function enforceMovement(items, sources) {
       }
     );
 
-    const now = Date.now();
-    if (now - lastBlockNotice > 1400) {
-      lastBlockNotice = now;
-      await OBR.notification.show("墙壁阻挡了棋子的移动。", "INFO");
-    }
-
     return new Map(rejected.map(entry => [entry.item.id, entry.oldPosition]));
   } catch (error) {
     console.error("[WallBrush] Token collision correction failed.", error);
@@ -597,10 +590,6 @@ async function toggleGuides() {
       for (const item of items) item.visible = showGuides;
     });
   }
-  await OBR.notification.show(
-    showGuides ? "DM 墙线已显示。" : "DM 墙线已隐藏。",
-    "SUCCESS"
-  );
 }
 
 async function toggleSnap() {
@@ -611,10 +600,6 @@ async function toggleSnap() {
     ...(metadata || {}),
     snapToGrid
   });
-  await OBR.notification.show(
-    snapToGrid ? "网格吸附已开启。" : "网格吸附已关闭。",
-    "SUCCESS"
-  );
 }
 
 async function clearWalls() {
@@ -628,10 +613,7 @@ async function clearWalls() {
 
   clearArmedUntil = 0;
   const sources = await OBR.scene.items.getItems(isWallSource);
-  if (!sources.length) {
-    await OBR.notification.show("当前场景没有 WallBrush 墙壁。", "INFO");
-    return;
-  }
+  if (!sources.length) return;
 
   await OBR.scene.items.deleteItems(sources.map(source => source.id));
   await queueSceneReconcile();
@@ -640,10 +622,7 @@ async function clearWalls() {
 
 async function commitWall(start, end) {
   const length = Math.hypot(end.x - start.x, end.y - start.y);
-  if (length < 4) {
-    await OBR.notification.show("墙壁太短，未保存。", "INFO");
-    return;
-  }
+  if (length < 4) return;
 
   const source = makeWallSource(start, end);
   console.info("[WallBrush] Committing source line:", source.id, start, end);
@@ -681,7 +660,6 @@ async function commitWall(start, end) {
     throw new Error("碰撞墙已生成，但 DM 辅助线没有生成。");
   }
 
-  await OBR.notification.show("墙壁已保存，碰撞墙已生成。", "SUCCESS");
 }
 
 async function createTools() {
@@ -765,7 +743,6 @@ async function createTools() {
         const preview = makePreview(dragStart);
         await OBR.scene.local.addItems([preview]);
         previewId = preview.id;
-        console.info("[WallBrush] Drag started:", dragStart);
       } catch (error) {
         dragStart = null;
         await removePreview();
@@ -829,7 +806,6 @@ async function createTools() {
       if (source) {
         await OBR.scene.items.deleteItems([source.id]);
         await queueSceneReconcile();
-        await OBR.notification.show("已删除一段墙壁。", "SUCCESS");
       }
       return false;
     }
@@ -900,13 +876,6 @@ OBR.onReady(async () => {
     if (await OBR.scene.isReady()) {
       await initializeScene();
     }
-
-    await OBR.notification.show(
-      isGM()
-        ? "WallBrush 0.2.1 已加载。拖动绘制墙壁。"
-        : "WallBrush 已连接；编辑工具仅对房主显示。",
-      "SUCCESS"
-    );
 
     console.info("[WallBrush] 0.2.1 ready; role =", role);
   } catch (error) {
