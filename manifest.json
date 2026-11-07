@@ -1,9 +1,9 @@
 {
   "name": "墙壁编辑器",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "manifest_version": 1,
   "author": "TRPG Lab",
-  "description": "DM 绘制阻挡棋子移动的墙线，自动同步到房间内所有玩家。",
+  "description": "DM 绘制隐藏墙壁；玩家自动同步本地碰撞，阻挡棋子与动态视野。",
   "icon": "./icons/tool.svg",
   "background_url": "./background.html"
 }
