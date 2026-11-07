@@ -511,8 +511,8 @@ async function reconcileLocalItems(sharedItems) {
           if (!entry) continue;
           item.startPosition = entry.start;
           item.endPosition = entry.end;
-          item.strokeColor = entry.style.color;
-          item.strokeDash = entry.style.dash;
+          item.style.strokeColor = entry.style.color;
+          item.style.strokeDash = entry.style.dash;
           item.visible = showGuides;
         }
       }
