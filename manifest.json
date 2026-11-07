@@ -1,16 +1,9 @@
 {
-  "name": "墙壁编辑器诊断",
-  "version": "0.1.6",
+  "name": "墙壁编辑器",
+  "version": "0.2.0",
   "manifest_version": 1,
-  "description": "诊断 Owlbear 扩展后台入口和自定义工具注册。",
   "author": "TRPG Lab",
+  "description": "DM 绘制隐藏墙壁；同步 Owlbear 墙体、视野遮挡和棋子移动阻挡。",
   "icon": "https://trayama.github.io/wallbrush/icons/tool.svg",
-  "background_url": "https://trayama.github.io/wallbrush/background.html",
-  "action": {
-    "title": "墙壁编辑器诊断",
-    "icon": "https://trayama.github.io/wallbrush/icons/tool.svg",
-    "popover": "https://trayama.github.io/wallbrush/diagnostic.html",
-    "width": 360,
-    "height": 260
-  }
+  "background_url": "https://trayama.github.io/wallbrush/background.html"
 }
